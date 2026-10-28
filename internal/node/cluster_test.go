@@ -148,6 +148,26 @@ func (c *cluster) start(m *member) {
 	m.handler.set(api.New(n, slog.New(slog.DiscardHandler)))
 }
 
+// kill stops a member's raft and cuts it off, like a crashed process.
+func (c *cluster) kill(m *member) {
+	c.t.Helper()
+	c.isolate(m)
+	if err := m.node.Shutdown(); err != nil {
+		c.t.Fatalf("shut down %s: %v", m.id, err)
+	}
+	m.down = true
+}
+
+// isolate cuts a member off from every peer in both directions.
+func (c *cluster) isolate(m *member) {
+	m.trans.DisconnectAll()
+	for _, o := range c.members {
+		if o != m {
+			o.trans.Disconnect(raft.ServerAddress(m.id))
+		}
+	}
+}
+
 // leader waits until exactly one live member is a ready leader.
 func (c *cluster) leader() *member {
 	c.t.Helper()
@@ -178,6 +198,12 @@ func (c *cluster) follower(leader *member) *member {
 		return false
 	})
 	return found
+}
+
+func (c *cluster) advanceClocks(d time.Duration) {
+	for _, m := range c.members {
+		m.clock.Advance(d)
+	}
 }
 
 type response struct {
@@ -230,6 +256,19 @@ func createLease(t *testing.T, m *member, id string) {
 	}
 }
 
+func acquire(t *testing.T, m *member, name, leaseID string) response {
+	t.Helper()
+	return call(t, m, http.MethodPut, "/v1/locks/"+name, map[string]any{"lease_id": leaseID})
+}
+
+func token(t *testing.T, res response) uint64 {
+	t.Helper()
+	if res.status != http.StatusOK {
+		t.Fatalf("acquire: status %d, body %v", res.status, res.body)
+	}
+	return uint64(res.body["token"].(float64))
+}
+
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(waitTimeout)
@@ -243,6 +282,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 
 const (
 	leaseA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	leaseB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 )
 
 func TestFollowerForwardsWriteToLeader(t *testing.T) {
@@ -276,5 +316,26 @@ func TestForwardToLeaderThatDropsConnectionIsOutcomeUnknown(t *testing.T) {
 
 	if res.status != http.StatusServiceUnavailable || res.code() != "outcome_unknown" {
 		t.Fatalf("status %d, body %v, want 503 outcome_unknown", res.status, res.body)
+	}
+}
+
+func TestFailoverKeepsHeldLockAndIssuesHigherToken(t *testing.T) {
+	c := newCluster(t)
+	old := c.leader()
+	createLease(t, old, leaseA)
+	held := token(t, acquire(t, old, "build", leaseA))
+
+	c.advanceClocks(4 * time.Second)
+	c.kill(old)
+	// Lease A's deadline passes during the election, when no client can renew.
+	c.advanceClocks(2 * time.Second)
+	leader := c.leader()
+
+	createLease(t, leader, leaseB)
+	if res := acquire(t, leader, "build", leaseB); res.code() != "lock_held" {
+		t.Fatalf("acquire of held lock after failover: status %d, body %v, want lock_held", res.status, res.body)
+	}
+	if next := token(t, acquire(t, leader, "deploy", leaseB)); next <= held {
+		t.Errorf("token after failover = %d, want greater than %d", next, held)
 	}
 }

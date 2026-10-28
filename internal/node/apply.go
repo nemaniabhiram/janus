@@ -24,6 +24,9 @@ var (
 // Apply stamps cmd with this node's clock and commits it through raft. It
 // returns the state machine's result, or its rejection as an error.
 func (n *Node) Apply(cmd lock.Command) (any, error) {
+	if !n.ready() {
+		return nil, ErrNoLeader
+	}
 	return n.propose(cmd)
 }
 
@@ -35,26 +38,26 @@ func (n *Node) propose(cmd lock.Command) (any, error) {
 	}
 	f := n.raft.Apply(b, applyTimeout)
 	if err := f.Error(); err != nil {
-		return nil, n.raftError(cmd.Type, err)
+		return nil, n.raftError(string(cmd.Type), err)
 	}
 	res := f.Response().(applyResult)
 	return res.value, res.err
 }
 
 // raftError maps a raft failure by what it means for the entry.
-func (n *Node) raftError(t lock.CommandType, err error) error {
+func (n *Node) raftError(op string, err error) error {
 	switch {
 	case errors.Is(err, raft.ErrNotLeader),
 		errors.Is(err, raft.ErrLeadershipTransferInProgress),
 		errors.Is(err, raft.ErrEnqueueTimeout):
-		return fmt.Errorf("apply %s: %w: %w", t, ErrNoLeader, err)
+		return fmt.Errorf("apply %s: %w: %w", op, ErrNoLeader, err)
 	case errors.Is(err, raft.ErrLeadershipLost),
 		errors.Is(err, raft.ErrAbortedByRestore),
 		errors.Is(err, raft.ErrRaftShutdown):
-		return fmt.Errorf("apply %s: %w: %w", t, ErrOutcomeUnknown, err)
+		return fmt.Errorf("apply %s: %w: %w", op, ErrOutcomeUnknown, err)
 	default:
-		n.log.Error("raft apply failed", "command", t, "error", err)
-		return fmt.Errorf("apply %s: %w", t, err)
+		n.log.Error("raft apply failed", "op", op, "error", err)
+		return fmt.Errorf("apply %s: %w", op, err)
 	}
 }
 

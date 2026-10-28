@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/hashicorp/raft"
@@ -45,6 +46,11 @@ type Node struct {
 	forward  *http.Transport
 	clock    func() time.Time
 	log      *slog.Logger
+
+	gate     gate
+	leaderCh chan bool
+	done     chan struct{}
+	wg       sync.WaitGroup
 }
 
 // New starts raft and, on first start, bootstraps the cluster from the peer
@@ -61,6 +67,8 @@ func New(opts Options) (*Node, error) {
 		forward:  newForwardTransport(),
 		clock:    opts.Clock,
 		log:      opts.Logger.With("node_id", opts.ID),
+		leaderCh: make(chan bool),
+		done:     make(chan struct{}),
 	}
 	servers := make([]raft.Server, 0, len(opts.Peers))
 	for _, p := range opts.Peers {
@@ -74,6 +82,7 @@ func New(opts Options) (*Node, error) {
 	}
 	cfg.LocalID = raft.ServerID(opts.ID)
 	cfg.Logger = newHCLog(n.log)
+	cfg.NotifyCh = n.leaderCh
 
 	hasState, err := raft.HasExistingState(opts.LogStore, opts.StableStore, opts.SnapshotStore)
 	if err != nil {
@@ -84,6 +93,8 @@ func New(opts Options) (*Node, error) {
 		return nil, fmt.Errorf("start raft: %w", err)
 	}
 	n.raft = r
+	n.wg.Add(1)
+	go n.watchLeadership()
 	if !hasState {
 		err := r.BootstrapCluster(raft.Configuration{Servers: servers}).Error()
 		if err != nil && !errors.Is(err, raft.ErrCantBootstrap) {
@@ -93,14 +104,17 @@ func New(opts Options) (*Node, error) {
 	return n, nil
 }
 
-// ready reports whether this node can serve requests itself.
+// ready reports whether this node is a caught-up leader for the current term.
 func (n *Node) ready() bool {
-	return n.raft.State() == raft.Leader
+	return n.gate.admit(n.raft.CurrentTerm())
 }
 
-// Shutdown stops raft.
+// Shutdown stops raft and waits for the node's goroutines to exit.
 func (n *Node) Shutdown() error {
-	if err := n.raft.Shutdown().Error(); err != nil {
+	err := n.raft.Shutdown().Error()
+	close(n.done)
+	n.wg.Wait()
+	if err != nil {
 		return fmt.Errorf("shut down raft: %w", err)
 	}
 	return nil
