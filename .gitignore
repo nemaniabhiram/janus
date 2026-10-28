@@ -1,0 +1,9 @@
+# test and coverage output
+coverage.out
+*.test
+
+# local node data
+/data/
+
+# env files with real values
+.env

@@ -1,0 +1,16 @@
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - revive
+    - staticcheck
+  settings:
+    revive:
+      rules:
+        - name: exported
+
+formatters:
+  enable:
+    - gofmt
