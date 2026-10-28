@@ -20,6 +20,10 @@ const (
 	// forwardIdleConns keeps connections to the leader open under load. Go's
 	// default of two per host makes most forwards dial a new connection.
 	forwardIdleConns = 256
+	// forwardDialTimeout fails fast on a dead leader. Peers share a private
+	// network, so a dial this slow means the leader is gone, and the client
+	// gets a retryable no_leader instead of hanging through the election.
+	forwardDialTimeout = time.Second
 )
 
 // Route forwards r to the leader unless this node can serve it. It returns
@@ -71,6 +75,7 @@ func forwardError(err error) error {
 
 func newForwardTransport() *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.DialContext = (&net.Dialer{Timeout: forwardDialTimeout}).DialContext
 	t.ResponseHeaderTimeout = forwardTimeout
 	t.MaxIdleConns = forwardIdleConns
 	t.MaxIdleConnsPerHost = forwardIdleConns
