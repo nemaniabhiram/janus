@@ -49,3 +49,10 @@ func (f *FSM) Restore(b []byte) error {
 	f.state = s
 	return nil
 }
+
+// Counts returns the number of leases and locks.
+func (f *FSM) Counts() (leases, locks int) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return len(f.state.Leases), len(f.state.Locks)
+}
