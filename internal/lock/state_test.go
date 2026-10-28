@@ -178,3 +178,55 @@ func TestReleaseWithStaleTokenKeepsNewerGrant(t *testing.T) {
 		t.Errorf("lock = %+v, want the grant with token 4", got)
 	}
 }
+
+func expire(now int64, ids ...string) Command {
+	return Command{Type: CmdExpire, LeaseIDs: ids, Now: now}
+}
+
+func TestExpireSkipsLeaseRenewedAfterScan(t *testing.T) {
+	s := NewState()
+	apply(t, s, 1, create(leaseA, ttl, 1_000))
+	apply(t, s, 2, Command{Type: CmdRenewLease, LeaseID: leaseA, Now: 5_500})
+
+	apply(t, s, 3, expire(6_000, leaseA))
+
+	if _, ok := s.Leases[leaseA]; !ok {
+		t.Error("renewed lease was expired")
+	}
+}
+
+func TestExpireReleasesAllLocksOfTheLeaseOnly(t *testing.T) {
+	s := NewState()
+	apply(t, s, 1, create(leaseA, ttl, 1_000))
+	apply(t, s, 2, create(leaseB, 2*ttl, 1_000))
+	apply(t, s, 3, acquire("x", leaseA, 1_000))
+	apply(t, s, 4, acquire("y", leaseA, 1_000))
+	apply(t, s, 5, acquire("z", leaseB, 1_000))
+
+	apply(t, s, 6, expire(7_000, leaseA))
+
+	if _, ok := s.Locks["x"]; ok {
+		t.Error("lock x survived its lease")
+	}
+	if _, ok := s.Locks["y"]; ok {
+		t.Error("lock y survived its lease")
+	}
+	if _, ok := s.Locks["z"]; !ok {
+		t.Error("lock z of another lease was released")
+	}
+}
+
+func TestExpireNeverReleasesLockTheLeaseNoLongerHolds(t *testing.T) {
+	s := NewState()
+	apply(t, s, 1, create(leaseA, ttl, 1_000))
+	apply(t, s, 2, create(leaseB, 2*ttl, 1_000))
+	apply(t, s, 3, acquire("x", leaseA, 1_000))
+	apply(t, s, 4, Command{Type: CmdRelease, Name: "x", LeaseID: leaseA, Token: 3, Now: 1_000})
+	apply(t, s, 5, acquire("x", leaseB, 1_000))
+
+	apply(t, s, 6, expire(7_000, leaseA))
+
+	if got := s.Locks["x"]; got == nil || got.LeaseID != leaseB {
+		t.Errorf("lock x = %+v, want held by lease B", got)
+	}
+}

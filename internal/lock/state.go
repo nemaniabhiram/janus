@@ -50,6 +50,8 @@ func (s *State) Apply(index uint64, cmd Command) (any, error) {
 		return s.acquire(index, cmd.Name, cmd.LeaseID)
 	case CmdRelease:
 		return nil, s.release(cmd.Name, cmd.LeaseID, cmd.Token)
+	case CmdExpire:
+		return s.expire(cmd.LeaseIDs), nil
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrUnknownCommand, cmd.Type)
 	}
@@ -118,6 +120,19 @@ func (s *State) release(name, leaseID string, token uint64) error {
 	delete(s.Locks, name)
 	delete(s.Leases[leaseID].Locks, name)
 	return nil
+}
+
+// expire drops each listed lease that is past its deadline. The leader's scan
+// and this apply are separate moments, so a lease renewed in between survives.
+func (s *State) expire(ids []string) ExpireResult {
+	var res ExpireResult
+	for _, id := range ids {
+		if l, ok := s.Leases[id]; ok && s.Now >= l.ExpiresAt {
+			s.dropLease(l)
+			res.Expired++
+		}
+	}
+	return res
 }
 
 // liveLease returns the lease if it is live at s.Now. A lease past its
