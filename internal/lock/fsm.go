@@ -74,3 +74,22 @@ func (f *FSM) ExpiredLeases(now int64, limit int) []string {
 	}
 	return ids
 }
+
+// View is what a read reveals about a lock. It never includes the lease
+// id, which is a bearer capability.
+type View struct {
+	Held  bool
+	Token uint64
+}
+
+// ReadLock reports whether name is held. The holder's deadline is judged at
+// max(state.Now, now), the time the next acquire would judge it at.
+func (f *FSM) ReadLock(name string, now int64) View {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	l, ok := f.state.Locks[name]
+	if !ok || max(f.state.Now, now) >= f.state.Leases[l.LeaseID].ExpiresAt {
+		return View{}
+	}
+	return View{Held: true, Token: l.Token}
+}

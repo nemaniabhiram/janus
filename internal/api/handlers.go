@@ -25,6 +25,12 @@ type tokenBody struct {
 	Token uint64 `json:"token"`
 }
 
+type lockBody struct {
+	Name  string `json:"name"`
+	Held  bool   `json:"held"`
+	Token uint64 `json:"token,omitempty"`
+}
+
 type releaseBody struct {
 	LeaseID string `json:"lease_id"`
 	Token   uint64 `json:"token"`
@@ -128,6 +134,19 @@ func (s *server) release(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, struct{}{})
+}
+
+func (s *server) readLock(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !s.validName(w, r, name) {
+		return
+	}
+	v, err := s.b.ReadLock(name)
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, lockBody{Name: name, Held: v.Held, Token: v.Token})
 }
 
 // status answers from the local node, never the leader, and says so in its

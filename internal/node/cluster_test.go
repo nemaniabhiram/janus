@@ -355,3 +355,30 @@ func TestCrashedClientLeaseIsSweptAndLockFreed(t *testing.T) {
 	createLease(t, leader, leaseB)
 	token(t, acquire(t, leader, "build", leaseB))
 }
+
+func TestIsolatedOldLeaderRefusesLockReads(t *testing.T) {
+	c := newCluster(t)
+	leader := c.leader()
+	createLease(t, leader, leaseA)
+	token(t, acquire(t, leader, "build", leaseA))
+
+	c.isolate(leader)
+
+	if res := call(t, leader, http.MethodGet, "/v1/locks/build", nil); res.status != http.StatusServiceUnavailable {
+		t.Fatalf("read on isolated leader: status %d, body %v, want 503", res.status, res.body)
+	}
+}
+
+func TestLockWithHolderPastDeadlineReadsAsFree(t *testing.T) {
+	c := newCluster(t)
+	leader := c.leader()
+	createLease(t, leader, leaseA)
+	token(t, acquire(t, leader, "build", leaseA))
+
+	c.advanceClocks(6 * time.Second)
+
+	res := call(t, leader, http.MethodGet, "/v1/locks/build", nil)
+	if res.status != http.StatusOK || res.body["held"] != false {
+		t.Fatalf("read: status %d, body %v, want held false", res.status, res.body)
+	}
+}

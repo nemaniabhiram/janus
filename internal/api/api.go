@@ -26,6 +26,7 @@ type Backend interface {
 	// answered it.
 	Route(w http.ResponseWriter, r *http.Request, onErr func(http.ResponseWriter, *http.Request, error)) bool
 	Apply(cmd lock.Command) (any, error)
+	ReadLock(name string) (lock.View, error)
 	Status() node.Status
 }
 
@@ -43,6 +44,7 @@ func New(b Backend, log *slog.Logger) http.Handler {
 	mux.HandleFunc("DELETE /v1/leases/{id}", s.leaderOnly(s.revokeLease))
 	mux.HandleFunc("PUT /v1/locks/{name}", s.leaderOnly(s.acquire))
 	mux.HandleFunc("POST /v1/locks/{name}/release", s.leaderOnly(s.release))
+	mux.HandleFunc("GET /v1/locks/{name}", s.leaderOnly(s.readLock))
 	mux.HandleFunc("GET /v1/status", s.status)
 	return withRequestID(mux)
 }
