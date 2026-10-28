@@ -91,3 +91,90 @@ func TestCreateBeyondMaxLeasesIsRefused(t *testing.T) {
 		t.Fatalf("err = %v, want ErrCapacity", err)
 	}
 }
+
+func acquire(name, leaseID string, now int64) Command {
+	return Command{Type: CmdAcquire, Name: name, LeaseID: leaseID, Now: now}
+}
+
+func TestAcquireFreeLockUsesEntryIndexAsToken(t *testing.T) {
+	s := NewState()
+	apply(t, s, 1, create(leaseA, ttl, 1_000))
+
+	res := apply(t, s, 42, acquire("build", leaseA, 1_000)).(AcquireResult)
+
+	if res.Token != 42 {
+		t.Errorf("token = %d, want 42", res.Token)
+	}
+}
+
+func TestAcquireOfLockHeldByLiveLeaseIsRefused(t *testing.T) {
+	s := NewState()
+	apply(t, s, 1, create(leaseA, ttl, 1_000))
+	apply(t, s, 2, create(leaseB, ttl, 1_000))
+	apply(t, s, 3, acquire("build", leaseA, 1_000))
+
+	_, err := s.Apply(4, acquire("build", leaseB, 2_000))
+
+	if !errors.Is(err, ErrLockHeld) {
+		t.Fatalf("err = %v, want ErrLockHeld", err)
+	}
+	if got := s.Locks["build"].LeaseID; got != leaseA {
+		t.Errorf("holder = %s, want lease A", got)
+	}
+}
+
+func TestAcquireEvictsHolderPastDeadline(t *testing.T) {
+	s := NewState()
+	apply(t, s, 1, create(leaseA, ttl, 1_000))
+	apply(t, s, 2, create(leaseB, 2*ttl, 1_000))
+	apply(t, s, 3, acquire("build", leaseA, 1_000))
+
+	apply(t, s, 4, acquire("build", leaseB, 7_000))
+
+	if got := s.Locks["build"].LeaseID; got != leaseB {
+		t.Errorf("holder = %s, want lease B", got)
+	}
+	if _, ok := s.Leases[leaseA]; ok {
+		t.Error("expired holder was not evicted")
+	}
+}
+
+func TestReentrantAcquireReturnsExistingToken(t *testing.T) {
+	s := NewState()
+	apply(t, s, 1, create(leaseA, ttl, 1_000))
+	apply(t, s, 2, acquire("build", leaseA, 1_000))
+
+	res := apply(t, s, 3, acquire("build", leaseA, 2_000)).(AcquireResult)
+
+	if res.Token != 2 || s.Locks["build"].Token != 2 {
+		t.Errorf("token = %d, stored %d, want 2", res.Token, s.Locks["build"].Token)
+	}
+}
+
+func TestAcquireWithLeaseAtDeadlineIsRefused(t *testing.T) {
+	s := NewState()
+	apply(t, s, 1, create(leaseA, ttl, 1_000))
+
+	_, err := s.Apply(2, acquire("build", leaseA, 6_000))
+
+	if !errors.Is(err, ErrLeaseExpired) {
+		t.Fatalf("err = %v, want ErrLeaseExpired", err)
+	}
+}
+
+func TestReleaseWithStaleTokenKeepsNewerGrant(t *testing.T) {
+	s := NewState()
+	apply(t, s, 1, create(leaseA, ttl, 1_000))
+	apply(t, s, 2, acquire("build", leaseA, 1_000))
+	apply(t, s, 3, Command{Type: CmdRelease, Name: "build", LeaseID: leaseA, Token: 2, Now: 1_000})
+	apply(t, s, 4, acquire("build", leaseA, 1_000))
+
+	_, err := s.Apply(5, Command{Type: CmdRelease, Name: "build", LeaseID: leaseA, Token: 2, Now: 1_000})
+
+	if !errors.Is(err, ErrNotHeld) {
+		t.Fatalf("err = %v, want ErrNotHeld", err)
+	}
+	if got := s.Locks["build"]; got == nil || got.Token != 4 {
+		t.Errorf("lock = %+v, want the grant with token 4", got)
+	}
+}

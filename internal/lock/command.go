@@ -8,6 +8,8 @@ const (
 	CmdCreateLease CommandType = "create_lease"
 	CmdRenewLease  CommandType = "renew_lease"
 	CmdRevokeLease CommandType = "revoke_lease"
+	CmdAcquire     CommandType = "acquire"
+	CmdRelease     CommandType = "release"
 )
 
 // Command is one raft log entry. Now is stamped by the leader just before it
@@ -16,6 +18,8 @@ type Command struct {
 	Type    CommandType `json:"type"`
 	LeaseID string      `json:"lease_id,omitempty"`
 	TTL     int64       `json:"ttl_ms,omitempty"`
+	Name    string      `json:"name,omitempty"`
+	Token   uint64      `json:"token,omitempty"`
 	Now     int64       `json:"now"`
 }
 
@@ -24,4 +28,9 @@ type LeaseResult struct {
 	LeaseID string
 	TTL     int64
 	Created bool
+}
+
+// AcquireResult is the outcome of acquiring a lock.
+type AcquireResult struct {
+	Token uint64
 }

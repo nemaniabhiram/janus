@@ -46,6 +46,10 @@ func (s *State) Apply(index uint64, cmd Command) (any, error) {
 	case CmdRevokeLease:
 		s.revokeLease(cmd.LeaseID)
 		return nil, nil
+	case CmdAcquire:
+		return s.acquire(index, cmd.Name, cmd.LeaseID)
+	case CmdRelease:
+		return nil, s.release(cmd.Name, cmd.LeaseID, cmd.Token)
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrUnknownCommand, cmd.Type)
 	}
@@ -79,6 +83,41 @@ func (s *State) revokeLease(id string) {
 	if l, ok := s.Leases[id]; ok {
 		s.dropLease(l)
 	}
+}
+
+// acquire grants the lock with the entry index as its fencing token. A holder
+// past its deadline is evicted first, so an expired lease never blocks.
+func (s *State) acquire(index uint64, name, leaseID string) (AcquireResult, error) {
+	l, err := s.liveLease(leaseID)
+	if err != nil {
+		return AcquireResult{}, err
+	}
+	if held, ok := s.Locks[name]; ok {
+		if held.LeaseID == leaseID {
+			return AcquireResult{Token: held.Token}, nil
+		}
+		if _, err := s.liveLease(held.LeaseID); err == nil {
+			return AcquireResult{}, ErrLockHeld
+		}
+	}
+	if len(s.Locks) >= MaxLocks {
+		return AcquireResult{}, ErrCapacity
+	}
+	s.Locks[name] = &Lock{Name: name, LeaseID: leaseID, Token: index}
+	l.Locks[name] = struct{}{}
+	return AcquireResult{Token: index}, nil
+}
+
+// release is a conditional delete. Matching the token keeps a late retry of
+// an old release from dropping a newer grant held by the same lease.
+func (s *State) release(name, leaseID string, token uint64) error {
+	held, ok := s.Locks[name]
+	if !ok || held.LeaseID != leaseID || held.Token != token {
+		return ErrNotHeld
+	}
+	delete(s.Locks, name)
+	delete(s.Leases[leaseID].Locks, name)
+	return nil
 }
 
 // liveLease returns the lease if it is live at s.Now. A lease past its
