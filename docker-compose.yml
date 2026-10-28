@@ -1,0 +1,44 @@
+# a 3-node cluster. only the http ports reach the host, raft stays on the
+# compose network.
+x-janus: &janus
+  build: .
+  image: janus:local
+  environment: &env
+    JANUS_PEERS: n1=janus-1,n2=janus-2,n3=janus-3
+    JANUS_DATA_DIR: /data
+
+services:
+  janus-1:
+    <<: *janus
+    container_name: janus-1
+    hostname: janus-1
+    environment:
+      <<: *env
+      JANUS_NODE_ID: n1
+    ports: ["8081:8080"]
+    volumes: [janus-1:/data]
+
+  janus-2:
+    <<: *janus
+    container_name: janus-2
+    hostname: janus-2
+    environment:
+      <<: *env
+      JANUS_NODE_ID: n2
+    ports: ["8082:8080"]
+    volumes: [janus-2:/data]
+
+  janus-3:
+    <<: *janus
+    container_name: janus-3
+    hostname: janus-3
+    environment:
+      <<: *env
+      JANUS_NODE_ID: n3
+    ports: ["8083:8080"]
+    volumes: [janus-3:/data]
+
+volumes:
+  janus-1:
+  janus-2:
+  janus-3:

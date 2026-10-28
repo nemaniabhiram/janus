@@ -30,3 +30,6 @@ jobs:
 
       - name: test
         run: go test -race ./...
+
+      - name: docker build
+        run: docker build -t janus:ci .
