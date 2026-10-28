@@ -17,6 +17,9 @@ const (
 	requestIDHeader = "X-Request-Id"
 	// forwardTimeout leaves the leader room to finish its own raft apply.
 	forwardTimeout = applyTimeout + time.Second
+	// forwardIdleConns keeps connections to the leader open under load. Go's
+	// default of two per host makes most forwards dial a new connection.
+	forwardIdleConns = 256
 )
 
 // Route forwards r to the leader unless this node can serve it. It returns
@@ -69,6 +72,8 @@ func forwardError(err error) error {
 func newForwardTransport() *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.ResponseHeaderTimeout = forwardTimeout
+	t.MaxIdleConns = forwardIdleConns
+	t.MaxIdleConnsPerHost = forwardIdleConns
 	return t
 }
 
