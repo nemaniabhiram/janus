@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/hashicorp/raft"
@@ -36,27 +38,32 @@ type Options struct {
 
 // Node is one member of the cluster.
 type Node struct {
-	id    string
-	raft  *raft.Raft
-	fsm   *lock.FSM
-	peers map[raft.ServerID]Peer
-	clock func() time.Time
-	log   *slog.Logger
+	id       string
+	raft     *raft.Raft
+	fsm      *lock.FSM
+	httpURLs map[raft.ServerID]*url.URL
+	forward  *http.Transport
+	clock    func() time.Time
+	log      *slog.Logger
 }
 
 // New starts raft and, on first start, bootstraps the cluster from the peer
 // list. Every node bootstraps with the same list, which hashicorp/raft allows.
 func New(opts Options) (*Node, error) {
+	httpURLs, err := parseHTTPURLs(opts.Peers)
+	if err != nil {
+		return nil, err
+	}
 	n := &Node{
-		id:    opts.ID,
-		fsm:   lock.NewFSM(),
-		peers: make(map[raft.ServerID]Peer, len(opts.Peers)),
-		clock: opts.Clock,
-		log:   opts.Logger.With("node_id", opts.ID),
+		id:       opts.ID,
+		fsm:      lock.NewFSM(),
+		httpURLs: httpURLs,
+		forward:  newForwardTransport(),
+		clock:    opts.Clock,
+		log:      opts.Logger.With("node_id", opts.ID),
 	}
 	servers := make([]raft.Server, 0, len(opts.Peers))
 	for _, p := range opts.Peers {
-		n.peers[raft.ServerID(p.ID)] = p
 		servers = append(servers, raft.Server{ID: raft.ServerID(p.ID), Address: raft.ServerAddress(p.RaftAddr)})
 	}
 
@@ -84,6 +91,11 @@ func New(opts Options) (*Node, error) {
 		}
 	}
 	return n, nil
+}
+
+// ready reports whether this node can serve requests itself.
+func (n *Node) ready() bool {
+	return n.raft.State() == raft.Leader
 }
 
 // Shutdown stops raft.

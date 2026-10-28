@@ -22,6 +22,9 @@ const (
 
 // Backend is the node the api serves from.
 type Backend interface {
+	// Route forwards a request this node cannot serve and reports whether it
+	// answered it.
+	Route(w http.ResponseWriter, r *http.Request, onErr func(http.ResponseWriter, *http.Request, error)) bool
 	Apply(cmd lock.Command) (any, error)
 	Status() node.Status
 }
@@ -35,13 +38,24 @@ type server struct {
 func New(b Backend, log *slog.Logger) http.Handler {
 	s := &server{b: b, log: log}
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/leases", s.createLease)
-	mux.HandleFunc("POST /v1/leases/{id}/renew", s.renewLease)
-	mux.HandleFunc("DELETE /v1/leases/{id}", s.revokeLease)
-	mux.HandleFunc("PUT /v1/locks/{name}", s.acquire)
-	mux.HandleFunc("POST /v1/locks/{name}/release", s.release)
+	mux.HandleFunc("POST /v1/leases", s.leaderOnly(s.createLease))
+	mux.HandleFunc("POST /v1/leases/{id}/renew", s.leaderOnly(s.renewLease))
+	mux.HandleFunc("DELETE /v1/leases/{id}", s.leaderOnly(s.revokeLease))
+	mux.HandleFunc("PUT /v1/locks/{name}", s.leaderOnly(s.acquire))
+	mux.HandleFunc("POST /v1/locks/{name}/release", s.leaderOnly(s.release))
 	mux.HandleFunc("GET /v1/status", s.status)
 	return withRequestID(mux)
+}
+
+// leaderOnly is the one check every route but status goes through. The node
+// either serves the request itself or answers it through the leader.
+func (s *server) leaderOnly(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.b.Route(w, r, s.writeError) {
+			return
+		}
+		h(w, r)
+	}
 }
 
 type ctxKey struct{}
