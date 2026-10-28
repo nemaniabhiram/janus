@@ -66,7 +66,7 @@ func (n *Node) takeOver(ctx context.Context, term uint64) bool {
 }
 
 func (n *Node) catchUpAndPromote() (lock.PromoteResult, error) {
-	if err := n.raft.Barrier(applyTimeout).Error(); err != nil {
+	if err := n.wait(n.raft.Barrier(applyTimeout)); err != nil {
 		return lock.PromoteResult{}, n.raftError("barrier", err)
 	}
 	v, err := n.propose(lock.Command{Type: lock.CmdPromote})

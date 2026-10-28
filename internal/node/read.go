@@ -13,7 +13,7 @@ func (n *Node) ReadLock(name string) (lock.View, error) {
 	if !n.ready() {
 		return lock.View{}, ErrNoLeader
 	}
-	if err := n.raft.VerifyLeader().Error(); err != nil {
+	if err := n.wait(n.raft.VerifyLeader()); err != nil {
 		return lock.View{}, fmt.Errorf("verify leader: %w: %w", ErrNoLeader, err)
 	}
 	return n.fsm.ReadLock(name, n.now()), nil

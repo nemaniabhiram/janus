@@ -37,11 +37,25 @@ func (n *Node) propose(cmd lock.Command) (any, error) {
 		return nil, fmt.Errorf("encode %s command: %w", cmd.Type, err)
 	}
 	f := n.raft.Apply(b, applyTimeout)
-	if err := f.Error(); err != nil {
+	if err := n.wait(f); err != nil {
 		return nil, n.raftError(string(cmd.Type), err)
 	}
 	res := f.Response().(applyResult)
 	return res.value, res.err
+}
+
+// wait resolves f, or gives up once the node shuts down. hashicorp/raft never
+// resolves a future still queued when raft stops, so waiting on it alone
+// could block forever.
+func (n *Node) wait(f raft.Future) error {
+	res := make(chan error, 1)
+	go func() { res <- f.Error() }()
+	select {
+	case err := <-res:
+		return err
+	case <-n.done:
+		return raft.ErrRaftShutdown
+	}
 }
 
 // raftError maps a raft failure by what it means for the entry.
