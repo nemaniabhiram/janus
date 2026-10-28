@@ -34,6 +34,12 @@ func NewState() *State {
 // Apply runs cmd, committed at index, against the state. Rejections come back
 // as typed errors and leave the state unchanged apart from evictions.
 func (s *State) Apply(index uint64, cmd Command) (any, error) {
+	// Promote judges liveness at the last applied time, before its own stamp
+	// moves the clock past the election.
+	if cmd.Type == CmdPromote {
+		return s.promote(cmd.Now), nil
+	}
+
 	// A new leader's clock may be behind the old one. Clamping keeps time
 	// inside the state machine from moving backwards.
 	s.Now = max(s.Now, cmd.Now)
@@ -131,6 +137,26 @@ func (s *State) expire(ids []string) ExpireResult {
 			s.dropLease(l)
 			res.Expired++
 		}
+	}
+	return res
+}
+
+// promote runs once when a leader takes over. Leases dead at the last applied
+// time are dropped, not revived, because their clients may already have been
+// told they expired. The survivors get a fresh deadline, since nobody could
+// renew during the election.
+func (s *State) promote(now int64) PromoteResult {
+	var res PromoteResult
+	for _, l := range s.Leases {
+		if s.Now >= l.ExpiresAt {
+			s.dropLease(l)
+			res.Dropped++
+		}
+	}
+	s.Now = max(s.Now, now)
+	for _, l := range s.Leases {
+		l.ExpiresAt = s.Now + l.TTL
+		res.Reset++
 	}
 	return res
 }

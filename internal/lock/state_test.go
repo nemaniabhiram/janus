@@ -230,3 +230,31 @@ func TestExpireNeverReleasesLockTheLeaseNoLongerHolds(t *testing.T) {
 		t.Errorf("lock x = %+v, want held by lease B", got)
 	}
 }
+
+func TestPromoteResetsLeaseAliveAtLastAppliedTime(t *testing.T) {
+	s := NewState()
+	apply(t, s, 1, create(leaseA, ttl, 1_000))
+	apply(t, s, 2, create(leaseB, ttl, 5_000))
+
+	apply(t, s, 3, Command{Type: CmdPromote, Now: 8_000})
+
+	if l, ok := s.Leases[leaseA]; !ok || l.ExpiresAt != 13_000 {
+		t.Errorf("lease A = %+v, want reset to expire at 13000", l)
+	}
+}
+
+func TestPromoteDropsLeaseAlreadyDeadAtLastAppliedTime(t *testing.T) {
+	s := NewState()
+	apply(t, s, 1, create(leaseA, ttl, 1_000))
+	apply(t, s, 2, acquire("build", leaseA, 1_000))
+	apply(t, s, 3, create(leaseB, ttl, 7_000))
+
+	apply(t, s, 4, Command{Type: CmdPromote, Now: 8_000})
+
+	if _, ok := s.Leases[leaseA]; ok {
+		t.Error("dead lease was revived by promote")
+	}
+	if _, ok := s.Locks["build"]; ok {
+		t.Error("dead lease's lock survived promote")
+	}
+}

@@ -11,6 +11,7 @@ const (
 	CmdAcquire     CommandType = "acquire"
 	CmdRelease     CommandType = "release"
 	CmdExpire      CommandType = "expire"
+	CmdPromote     CommandType = "promote"
 )
 
 // Command is one raft log entry. Now is stamped by the leader just before it
@@ -40,4 +41,10 @@ type AcquireResult struct {
 // ExpireResult is the outcome of an expire batch.
 type ExpireResult struct {
 	Expired int
+}
+
+// PromoteResult is the outcome of a new leader taking over.
+type PromoteResult struct {
+	Reset   int
+	Dropped int
 }
