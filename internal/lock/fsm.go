@@ -56,3 +56,21 @@ func (f *FSM) Counts() (leases, locks int) {
 	defer f.mu.RUnlock()
 	return len(f.state.Leases), len(f.state.Locks)
 }
+
+// ExpiredLeases returns up to limit ids of leases past their deadline, judged
+// at max(state.Now, now) like the next command would be. It walks every lease.
+func (f *FSM) ExpiredLeases(now int64, limit int) []string {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	t := max(f.state.Now, now)
+	var ids []string
+	for id, l := range f.state.Leases {
+		if len(ids) == limit {
+			break
+		}
+		if t >= l.ExpiresAt {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}

@@ -34,28 +34,32 @@ func (n *Node) watchLeadership() {
 			n.wg.Add(1)
 			go func() {
 				defer n.wg.Done()
-				n.takeOver(ctx, term)
+				if n.takeOver(ctx, term) {
+					n.sweep(ctx)
+				}
 			}()
 		}
 	}
 }
 
-// takeOver catches up and promotes, then opens the gate for term. Without the
+// takeOver catches up and promotes, then opens the gate for term. It reports
+// whether the gate opened. Without the
 // barrier a read could see state from before it. Without waiting for promote,
 // a write stamped after the election could evict leases promote would protect.
-func (n *Node) takeOver(ctx context.Context, term uint64) {
+func (n *Node) takeOver(ctx context.Context, term uint64) bool {
 	for {
 		res, err := n.catchUpAndPromote()
 		if err == nil {
-			if n.gate.open(ctx, term) {
-				n.log.Info("promote applied", "term", term, "leases_reset", res.Reset, "leases_dropped", res.Dropped)
+			if !n.gate.open(ctx, term) {
+				return false
 			}
-			return
+			n.log.Info("promote applied", "term", term, "leases_reset", res.Reset, "leases_dropped", res.Dropped)
+			return true
 		}
 		n.log.Warn("take over failed, retrying", "term", term, "error", err)
 		select {
 		case <-ctx.Done():
-			return
+			return false
 		case <-time.After(takeOverRetry):
 		}
 	}

@@ -339,3 +339,19 @@ func TestFailoverKeepsHeldLockAndIssuesHigherToken(t *testing.T) {
 		t.Errorf("token after failover = %d, want greater than %d", next, held)
 	}
 }
+
+func TestCrashedClientLeaseIsSweptAndLockFreed(t *testing.T) {
+	c := newCluster(t)
+	leader := c.leader()
+	createLease(t, leader, leaseA)
+	token(t, acquire(t, leader, "build", leaseA))
+
+	c.advanceClocks(6 * time.Second)
+
+	waitFor(t, "the sweep to reclaim lease A and its lock", func() bool {
+		st := leader.node.Status()
+		return st.Leases == 0 && st.Locks == 0
+	})
+	createLease(t, leader, leaseB)
+	token(t, acquire(t, leader, "build", leaseB))
+}
