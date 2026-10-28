@@ -52,6 +52,12 @@ func (n *Node) Route(w http.ResponseWriter, r *http.Request, onErr func(http.Res
 			pr.Out.Header.Set(forwardedHeader, "1")
 		},
 		Transport: n.forward,
+		// The leader echoes the request id this node already set on the
+		// response. Dropping its copy keeps the header single-valued.
+		ModifyResponse: func(res *http.Response) error {
+			res.Header.Del(requestIDHeader)
+			return nil
+		},
 		// Go's default handler writes a bare 502 that hides whether the leader
 		// saw the write.
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
