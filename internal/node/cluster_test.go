@@ -23,6 +23,9 @@ const (
 	waitTimeout  = 10 * time.Second
 	pollInterval = 10 * time.Millisecond
 	testTTL      = 5_000
+
+	snapshotThreshold = 128
+	snapshotInterval  = 200 * time.Millisecond
 )
 
 // fakeClock is the only stubbed boundary besides the network. Each node gets
@@ -129,6 +132,10 @@ func (c *cluster) start(m *member) {
 	cfg.ElectionTimeout = raftTimeout
 	cfg.LeaderLeaseTimeout = raftTimeout
 	cfg.CommitTimeout = 5 * time.Millisecond
+	// Snapshot often, so restarts and lagging followers go through restore.
+	cfg.SnapshotThreshold = snapshotThreshold
+	cfg.SnapshotInterval = snapshotInterval
+	cfg.TrailingLogs = snapshotThreshold / 2
 	n, err := node.New(node.Options{
 		ID:            m.id,
 		Peers:         c.peers,
@@ -164,6 +171,17 @@ func (c *cluster) isolate(m *member) {
 	for _, o := range c.members {
 		if o != m {
 			o.trans.Disconnect(raft.ServerAddress(m.id))
+		}
+	}
+}
+
+// heal reconnects every pair of live members.
+func (c *cluster) heal() {
+	for _, m := range c.members {
+		for _, o := range c.members {
+			if m != o && !m.down && !o.down {
+				m.trans.Connect(raft.ServerAddress(o.id), o.trans)
+			}
 		}
 	}
 }
