@@ -19,7 +19,9 @@ type slogHCLog struct {
 	args  []any
 }
 
-func newHCLog(l *slog.Logger) hclog.Logger {
+// NewRaftLogger returns an hclog.Logger that writes to l, for raft pieces built
+// outside this package such as the tcp transport.
+func NewRaftLogger(l *slog.Logger) hclog.Logger {
 	return &slogHCLog{log: l, name: "raft", level: hclog.Info}
 }
 

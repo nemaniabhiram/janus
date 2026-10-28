@@ -81,7 +81,7 @@ func New(opts Options) (*Node, error) {
 		cfg = &c
 	}
 	cfg.LocalID = raft.ServerID(opts.ID)
-	cfg.Logger = newHCLog(n.log)
+	cfg.Logger = NewRaftLogger(n.log)
 	cfg.NotifyCh = n.leaderCh
 
 	hasState, err := raft.HasExistingState(opts.LogStore, opts.StableStore, opts.SnapshotStore)
@@ -107,6 +107,18 @@ func New(opts Options) (*Node, error) {
 // ready reports whether this node is a caught-up leader for the current term.
 func (n *Node) ready() bool {
 	return n.gate.admit(n.raft.CurrentTerm())
+}
+
+// TransferLeadership hands leadership to a peer if this node is the leader,
+// so the cluster skips waiting out an election timeout.
+func (n *Node) TransferLeadership() error {
+	if n.raft.State() != raft.Leader {
+		return nil
+	}
+	if err := n.raft.LeadershipTransfer().Error(); err != nil {
+		return fmt.Errorf("transfer leadership: %w", err)
+	}
+	return nil
 }
 
 // Shutdown stops raft and waits for the node's goroutines to exit.
