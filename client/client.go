@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"time"
@@ -147,7 +148,12 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) (in
 	if err != nil {
 		return 0, fmt.Errorf("%s %s: %w", method, path, err)
 	}
-	defer func() { _ = res.Body.Close() }()
+	// Reading to EOF lets the transport reuse the connection, even for calls
+	// that ignore the body.
+	defer func() {
+		_, _ = io.Copy(io.Discard, res.Body)
+		_ = res.Body.Close()
+	}()
 	if res.StatusCode >= http.StatusBadRequest {
 		var e struct {
 			Error struct {
